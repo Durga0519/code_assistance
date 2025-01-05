@@ -10,9 +10,9 @@ import matplotlib.pyplot as plt
 load_dotenv()
 
 # Configure the Gemini API key
-GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+GEMINI_API_KEY = st.secrets["GEMINI"]["API_KEY"]
 
-# Configure the Google Gemini API with the API key
+# Configure the Google Gemini API
 genai.configure(api_key=GEMINI_API_KEY)
 
 def debug_code(code: str, language: str):

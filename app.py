@@ -15,15 +15,20 @@ except LookupError:
 
 # Cache expensive operations
 @st.cache_resource
+# In your load_models function:
 def load_models():
     # Load pre-trained models
     sentence_transformer_model = SentenceTransformer('all-MiniLM-L6-v2')
     sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
     summarization_pipeline = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
-    language_tool = language_tool_python.LanguageTool('en-US')
+    
+    # Use remote language tool server to avoid local Java dependency
+    language_tool = language_tool_python.LanguageTool('en-US', remote_server_url="https://api.languagetool.org")
+    
     sentiment_analyzer = SentimentIntensityAnalyzer()
     
     return sentence_transformer_model, sentiment_pipeline, summarization_pipeline, language_tool, sentiment_analyzer
+
 
 # Load models once
 model, sentiment_analyzer_pipeline, summarizer, tool, sia = load_models()

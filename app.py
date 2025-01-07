@@ -3,7 +3,7 @@ import streamlit as st
 import speech_recognition as sr
 from sentence_transformers import SentenceTransformer
 from transformers import pipeline
-import language_tool_python
+import requests
 from nltk.sentiment import SentimentIntensityAnalyzer
 import nltk
 
@@ -15,23 +15,18 @@ except LookupError:
 
 # Cache expensive operations
 @st.cache_resource
-# In your load_models function:
 def load_models():
     # Load pre-trained models
     sentence_transformer_model = SentenceTransformer('all-MiniLM-L6-v2')
     sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
     summarization_pipeline = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
     
-    # Use remote language tool server to avoid local Java dependency
-    language_tool = language_tool_python.LanguageTool('en-US', remote_server_url="https://api.languagetool.org")
-    
     sentiment_analyzer = SentimentIntensityAnalyzer()
     
-    return sentence_transformer_model, sentiment_pipeline, summarization_pipeline, language_tool, sentiment_analyzer
-
+    return sentence_transformer_model, sentiment_pipeline, summarization_pipeline, sentiment_analyzer
 
 # Load models once
-model, sentiment_analyzer_pipeline, summarizer, tool, sia = load_models()
+model, sentiment_analyzer_pipeline, summarizer, sia = load_models()
 
 # UI Setup
 st.title("AI Soft Skills Coach")
@@ -120,6 +115,35 @@ elif answer_mode == "Speak":
                 st.error(f"Speech Recognition service error: {e}")
                 answer = ""
 
+# Grammar and Syntax Check using LanguageTool API
+def get_language_tool_feedback(text):
+    # LanguageTool API URL
+    api_url = "https://api.languagetool.org/v2/check"
+    
+    # Data to be sent to the LanguageTool API
+    payload = {
+        'text': text,
+        'language': 'en-US'
+    }
+
+    # Send POST request to the LanguageTool API
+    response = requests.post(api_url, data=payload)
+    
+    if response.status_code == 200:
+        # Parse response and collect issues
+        result = response.json()
+        issues = result.get('matches', [])
+        
+        feedback = []
+        for issue in issues:
+            feedback.append(f"Issue: {issue['message']}, Context: {issue['context']['text']}")
+        
+        if not feedback:
+            feedback.append("No grammar issues detected.")
+        return feedback
+    else:
+        return ["Error: Unable to connect to LanguageTool API."]
+
 # Feedback using Hugging Face models and LanguageTool
 def get_feedback(answer):
     # 1. Sentiment analysis feedback (tone)
@@ -146,9 +170,8 @@ def get_feedback(answer):
     summarized = summarizer(answer, max_length=50, min_length=25, do_sample=False)
     structure_feedback = f"Your answer summary: {summarized[0]['summary_text']}."
 
-    # 4. Grammar and Syntax Check
-    matches = tool.check(answer)
-    grammar_feedback = f"Potential grammar issues: {len(matches)} errors found." if matches else "Your grammar looks good!"
+    # 4. Grammar and Syntax Check (using LanguageTool API)
+    grammar_feedback = get_language_tool_feedback(answer)
 
     # 5. Semantic Relevance (using Sentence Transformers)
     reference_answer = "Provide an answer that directly addresses the question with specific examples."

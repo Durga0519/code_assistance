@@ -1,5 +1,4 @@
 streamlit
-streamlit-ace
-python-dotenv
-matplotlib
-google-generativeai
+SpeechRecognition
+sentence-transformers
+nltk

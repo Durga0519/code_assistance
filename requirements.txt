@@ -1,4 +1,7 @@
+numpy
 streamlit
-SpeechRecognition
+speechrecognition
 sentence-transformers
+transformers
+language-tool-python
 nltk

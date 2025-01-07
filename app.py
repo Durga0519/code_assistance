@@ -1,15 +1,32 @@
+import numpy as np
 import streamlit as st
 import speech_recognition as sr
 from sentence_transformers import SentenceTransformer
+from transformers import pipeline
+import language_tool_python
 from nltk.sentiment import SentimentIntensityAnalyzer
 import nltk
 
-# Download required NLTK data
-nltk.download('vader_lexicon')
+# Download NLTK data only once
+try:
+    nltk.data.find('sentiment/vader_lexicon')
+except LookupError:
+    nltk.download('vader_lexicon')
 
-# Load pre-trained models
-model = SentenceTransformer('all-MiniLM-L6-v2')
-sia = SentimentIntensityAnalyzer()
+# Cache expensive operations
+@st.cache_resource
+def load_models():
+    # Load pre-trained models
+    sentence_transformer_model = SentenceTransformer('all-MiniLM-L6-v2')
+    sentiment_pipeline = pipeline("sentiment-analysis", model="distilbert-base-uncased-finetuned-sst-2-english")
+    summarization_pipeline = pipeline("summarization", model="sshleifer/distilbart-cnn-12-6")
+    language_tool = language_tool_python.LanguageTool('en-US')
+    sentiment_analyzer = SentimentIntensityAnalyzer()
+    
+    return sentence_transformer_model, sentiment_pipeline, summarization_pipeline, language_tool, sentiment_analyzer
+
+# Load models once
+model, sentiment_analyzer_pipeline, summarizer, tool, sia = load_models()
 
 # UI Setup
 st.title("AI Soft Skills Coach")
@@ -62,44 +79,8 @@ def generate_question(role, level):
                 "What is your approach to designing system architecture?",
                 "How do you balance technical debt with delivering features on time?"
             ]
-        },
-        "Product Manager": {
-            "Junior": [
-                "How do you gather and prioritize customer requirements?",
-                "Can you describe a time you worked with cross-functional teams?",
-                "What tools or frameworks do you use for product management?"
-            ],
-            "Mid-Level": [
-                "Describe how you prioritize features for a product roadmap.",
-                "How do you handle conflicts between stakeholders?",
-                "What strategies do you use to ensure a product launch is successful?"
-            ],
-            "Senior": [
-                "How do you define and communicate a product vision?",
-                "What’s your approach to managing and growing a product team?",
-                "How do you measure the long-term success of a product?"
-            ]
-        },
-        "Data Scientist": {
-            "Junior": [
-                "What tools or libraries are you most comfortable with in data analysis?",
-                "Describe a machine learning project you’ve worked on during your studies.",
-                "How do you handle missing or incomplete data?"
-            ],
-            "Mid-Level": [
-                "What’s your approach to selecting the right machine learning algorithm for a project?",
-                "Describe a time you translated data insights into actionable business decisions.",
-                "How do you communicate complex data findings to non-technical stakeholders?"
-            ],
-            "Senior": [
-                "How do you lead a data science team and ensure collaboration?",
-                "What’s your approach to building scalable data pipelines?",
-                "How do you align data science goals with business objectives?"
-            ]
         }
-        # Add more roles and experience levels here
     }
-    # Fallback questions if role or level is not matched
     return questions.get(role, {}).get(level, ["Tell me about yourself.", "Why should we hire you?"])
 
 questions = generate_question(role, level)
@@ -134,39 +115,61 @@ elif answer_mode == "Speak":
                 st.error(f"Speech Recognition service error: {e}")
                 answer = ""
 
-# Analysis and Feedback
-if answer.strip():  # Ensure answer is not empty or whitespace
-    # Answer Embedding Analysis
-    embeddings = model.encode(answer, convert_to_tensor=True)
-
-    # Clarity and Relevance Feedback
-    clarity_score = len(answer.split()) / 50  # Basic word count ratio
-    if clarity_score < 1:
-        clarity_feedback = "Your answer is too short and lacks detail. Consider expanding on your points with examples or explanations."
-    elif clarity_score > 3:
-        clarity_feedback = "Your answer is too long and may lack focus. Try to be more concise while covering the main points."
-    else:
-        clarity_feedback = "Well explained! Your answer is detailed and focused."
-
-    # Sentiment Analysis
-    sentiment = sia.polarity_scores(answer)
-    if sentiment['pos'] > 0.5:
+# Feedback using Hugging Face models and LanguageTool
+def get_feedback(answer):
+    # 1. Sentiment analysis feedback (tone)
+    sentiment_result = sentiment_analyzer_pipeline(answer)
+    sentiment = sentiment_result[0]['label']
+    
+    if sentiment == 'POSITIVE':
         tone_feedback = "Your tone is positive and engaging. Keep it up!"
-    elif sentiment['neg'] > 0.5:
+    elif sentiment == 'NEGATIVE':
         tone_feedback = "Your tone comes across as too negative. Try to rephrase certain parts to sound more optimistic."
     else:
         tone_feedback = "Your tone is neutral. Adding a bit more enthusiasm can make your response more compelling."
 
-    # Actionable Feedback on Structure and Specific Suggestions
-    structure_feedback = "Your answer could benefit from a clearer structure. Consider organizing it into three parts: an introduction, the main points, and a conclusion."
-    specific_feedback = "Consider revising the following parts of your answer: \n- Opening: Does it grab attention? \n- Examples: Are they specific and relevant? \n- Closing: Does it leave a strong impression?"
+    # 2. Clarity feedback (wordiness check)
+    clarity_feedback = "Your answer is clear and well-structured."
 
-    # Display Feedback
+    word_count = len(answer.split())
+    if word_count < 50:
+        clarity_feedback = "Your answer is a bit short. Consider elaborating more on your points."
+    elif word_count > 150:
+        clarity_feedback = "Your answer is quite long. Try to be more concise while covering the main points."
+
+    # 3. Structure feedback (using summarization)
+    summarized = summarizer(answer, max_length=50, min_length=25, do_sample=False)
+    structure_feedback = f"Your answer summary: {summarized[0]['summary_text']}."
+
+    # 4. Grammar and Syntax Check
+    matches = tool.check(answer)
+    grammar_feedback = f"Potential grammar issues: {len(matches)} errors found." if matches else "Your grammar looks good!"
+
+    # 5. Semantic Relevance (using Sentence Transformers)
+    reference_answer = "Provide an answer that directly addresses the question with specific examples."
+    sentence_embeddings = model.encode([answer, reference_answer])
+    cosine_similarity = np.dot(sentence_embeddings[0], sentence_embeddings[1]) / (np.linalg.norm(sentence_embeddings[0]) * np.linalg.norm(sentence_embeddings[1]))
+    
+    relevance_feedback = f"Your answer is semantically {cosine_similarity * 100:.2f}% relevant to the ideal answer."
+
+    # Return all feedback
+    return {
+        "tone_feedback": tone_feedback,     
+        "clarity_feedback": clarity_feedback,
+        "structure_feedback": structure_feedback,
+        "grammar_feedback": grammar_feedback,
+        "relevance_feedback": relevance_feedback
+    }
+
+# Show feedback if the answer is provided
+if answer.strip():
+    feedback = get_feedback(answer)
     st.subheader("Feedback")
-    st.write(f"**Clarity:** {clarity_feedback}")
-    st.write(f"**Tone:** {tone_feedback}")
-    st.write(f"**Structure:** {structure_feedback}")
-    st.write(f"**Specific Suggestions:** {specific_feedback}")
+    st.write(f"**Tone:** {feedback['tone_feedback']}")
+    st.write(f"**Clarity:** {feedback['clarity_feedback']}")
+    st.write(f"**Structure:** {feedback['structure_feedback']}")
+    st.write(f"**Grammar:** {feedback['grammar_feedback']}")
+    st.write(f"**Relevance:** {feedback['relevance_feedback']}")
 else:
     st.write("Please provide an answer to receive feedback.")
 

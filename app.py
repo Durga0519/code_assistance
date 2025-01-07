@@ -1,204 +1,175 @@
-import os
-from dotenv import load_dotenv
-import google.generativeai as genai
 import streamlit as st
-from streamlit_ace import st_ace
-import time
-import matplotlib.pyplot as plt
+import speech_recognition as sr
+from sentence_transformers import SentenceTransformer
+from nltk.sentiment import SentimentIntensityAnalyzer
+import nltk
 
-# Load environment variables from the .env file
-load_dotenv()
+# Download required NLTK data
+nltk.download('vader_lexicon')
 
-# Configure the Gemini API key
-GEMINI_API_KEY = st.secrets["GEMINI"]["API_KEY"]
+# Load pre-trained models
+model = SentenceTransformer('all-MiniLM-L6-v2')
+sia = SentimentIntensityAnalyzer()
 
-# Configure the Google Gemini API
-genai.configure(api_key=GEMINI_API_KEY)
+# UI Setup
+st.title("AI Soft Skills Coach")
+st.write("Simulate mock interviews and get actionable feedback to improve your communication skills!")
 
-def debug_code(code: str, language: str):
-    """ Debug code and provide detailed feedback on errors and fixes """
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = (
-            f"Please review the following {language} code and provide detailed debugging feedback. "
-            f"Explain the errors, suggest fixes, and provide detailed explanations:\n\n{code}\n\n"
-        )
-        response = model.generate_content(prompt)
-        feedback = response.text.strip()
-        fixed_code = None
-        if "Fixed Code:" in feedback:
-            fixed_code = feedback.split("Fixed Code:", 1)[1].strip()
-        return feedback, fixed_code
-    except Exception as e:
-        return f"Error contacting Gemini API: {str(e)}", None
+# User Profile Input
+st.sidebar.header("Interview Preferences")
+user_name = st.sidebar.text_input("Your Name", "John Doe")
 
-def convert_code(code: str, source_language: str, target_language: str):
-    """ Convert code from one language to another """
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = (
-            f"Convert the following {source_language} code into {target_language} code:\n\n"
-            f"{code}\n\n"
-            f"Provide equivalent {target_language} code with comments explaining any notable changes."
-        )
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        return f"Error contacting Gemini API: {str(e)}"
+# Dropdown menu for Role/Domain
+roles = [
+    "Software Engineer",
+    "Product Manager",
+    "Data Scientist",
+    "Marketing Specialist",
+    "Human Resources Manager",
+    "Sales Executive",
+    "UI/UX Designer",
+    "Business Analyst"
+]
+role = st.sidebar.selectbox("Select Your Role/Domain", roles)
 
-def analyze_complexity(code: str, language: str):
-    """ Analyze space and time complexity of the code """
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = (
-            f"Analyze the space and time complexity of the following {language} code. "
-            f"Suggest ways to optimize its performance:\n\n{code}\n\n"
-        )
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        return f"Error contacting Gemini API: {str(e)}"
+# Experience Level Input
+experience = st.sidebar.slider("Years of Experience", 0, 20, 2)
 
-def generate_practice_questions(skill_gap_data: str, language: str):
-    """ Generate coding questions based on skill-gap data """
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = (
-            f"Based on the following skill-gap data:\n\n{skill_gap_data}\n\n"
-            f"Generate 3 coding problems for {language} that help improve the weak areas. "
-            f"Include problem statements, sample inputs/outputs, and solutions."
-        )
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        return f"Error contacting Gemini API: {str(e)}"
+# Determine experience level
+if experience <= 2:
+    level = "Junior"
+elif 3 <= experience <= 7:
+    level = "Mid-Level"
+else:
+    level = "Senior"
 
-def interactive_mentoring(code: str, language: str):
-    """ Provide inline comments and real-time hints for the code """
-    try:
-        model = genai.GenerativeModel("gemini-1.5-flash")
-        prompt = (
-            f"Review the following {language} code and provide inline comments explaining each block. "
-            f"Focus on making complex sections easy to understand:\n\n{code}\n\n"
-            f"Additionally, suggest hints for solving this code step-by-step."
-        )
-        response = model.generate_content(prompt)
-        return response.text.strip()
-    except Exception as e:
-        return f"Error contacting Gemini API: {str(e)}"
-
-def main():
-    """ Main function for the Streamlit app """
-    st.set_page_config(page_title="Code Assistance with Google Gemini API", layout="wide")
-    st.title("Code Assistance with Google Gemini API")
-
-    if not GEMINI_API_KEY:
-        st.error("API key not configured. Please set the GEMINI_API_KEY environment variable.")
-        return
-
-    # Sidebar for selecting the feature
-    with st.sidebar:
-        st.title("Features")
-        feature = st.radio(
-            "Choose a feature:",
-            [
-                "Code Debugging",
-                "Code Conversion",
-                "Space & Time Complexity Analysis",
-                "Skill-Gap-Based Question Generation",
-                "Interactive Mentoring",
+# Dynamic Question Generation
+def generate_question(role, level):
+    questions = {
+        "Software Engineer": {
+            "Junior": [
+                "What projects have you worked on during your studies or internships?",
+                "How do you approach learning a new programming language?",
+                "Can you explain the basics of object-oriented programming?"
             ],
-        )
+            "Mid-Level": [
+                "Describe a challenging project you worked on and how you overcame the challenges.",
+                "How do you debug a complex issue in a codebase?",
+                "How do you ensure your code is maintainable and scalable?"
+            ],
+            "Senior": [
+                "How do you mentor junior developers on your team?",
+                "What is your approach to designing system architecture?",
+                "How do you balance technical debt with delivering features on time?"
+            ]
+        },
+        "Product Manager": {
+            "Junior": [
+                "How do you gather and prioritize customer requirements?",
+                "Can you describe a time you worked with cross-functional teams?",
+                "What tools or frameworks do you use for product management?"
+            ],
+            "Mid-Level": [
+                "Describe how you prioritize features for a product roadmap.",
+                "How do you handle conflicts between stakeholders?",
+                "What strategies do you use to ensure a product launch is successful?"
+            ],
+            "Senior": [
+                "How do you define and communicate a product vision?",
+                "What’s your approach to managing and growing a product team?",
+                "How do you measure the long-term success of a product?"
+            ]
+        },
+        "Data Scientist": {
+            "Junior": [
+                "What tools or libraries are you most comfortable with in data analysis?",
+                "Describe a machine learning project you’ve worked on during your studies.",
+                "How do you handle missing or incomplete data?"
+            ],
+            "Mid-Level": [
+                "What’s your approach to selecting the right machine learning algorithm for a project?",
+                "Describe a time you translated data insights into actionable business decisions.",
+                "How do you communicate complex data findings to non-technical stakeholders?"
+            ],
+            "Senior": [
+                "How do you lead a data science team and ensure collaboration?",
+                "What’s your approach to building scalable data pipelines?",
+                "How do you align data science goals with business objectives?"
+            ]
+        }
+        # Add more roles and experience levels here
+    }
+    # Fallback questions if role or level is not matched
+    return questions.get(role, {}).get(level, ["Tell me about yourself.", "Why should we hire you?"])
 
-        st.title("User Feedback")
-        rating = st.slider("Rate the app (1-5):", 1, 5, step=1)
-        comments = st.text_area("Leave your comments:")
-        if st.button("Submit Feedback"):
-            st.success("Thank you for your feedback!")
+questions = generate_question(role, level)
 
-    if feature == "Code Debugging":
-        st.subheader("Code Debugging")
-        code = st_ace(language="python", theme="monokai", height=400, font_size=14)
-        language = st.selectbox("Select the programming language:", ["Python", "JavaScript", "Java", "C++", "Go", "Ruby", "Other"])
-        if st.button("Submit Code"):
-            if not code:
-                st.error("Please provide code to analyze.")
-            else:
-                with st.spinner("Analyzing your code..."):
-                    feedback, fixed_code = debug_code(code, language)
-                    st.subheader("Feedback:")
-                    st.write(feedback)
-                    if fixed_code:
-                        st.subheader("Suggested Fixed Code:")
-                        st.code(fixed_code, language=language.lower())
+# Display Questions
+st.subheader(f"Mock Interview ({level} - {role})")
+for i, q in enumerate(questions):
+    st.write(f"**Question {i+1}:** {q}")
 
-    elif feature == "Code Conversion":
-        st.subheader("Code Conversion")
-        code = st_ace(language="python", theme="monokai", height=400, font_size=14)
-        source_language = st.selectbox("Select the source language:", ["Python", "JavaScript", "Java", "C++", "Go", "Ruby", "Other"])
-        target_language = st.selectbox("Select the target language:", ["Python", "JavaScript", "Java", "C++", "Go", "Ruby", "Other"])
-        if st.button("Convert Code"):
-            if not code:
-                st.error("Please provide code to convert.")
-            else:
-                with st.spinner("Converting your code..."):
-                    converted_code = convert_code(code, source_language, target_language)
-                    st.subheader("Converted Code:")
-                    st.code(converted_code, language=target_language.lower())
+# Answer Input
+st.subheader("Your Answer")
+answer_mode = st.radio("Input Mode", ["Type", "Speak"])
+answer = ""  # Initialize the answer variable
 
-    elif feature == "Space & Time Complexity Analysis":
-        st.subheader("Space & Time Complexity Analysis")
-        code = st_ace(language="python", theme="monokai", height=400, font_size=14)
-        language = st.selectbox("Select the programming language:", ["Python", "JavaScript", "Java", "C++", "Go", "Ruby", "Other"])
-        if st.button("Analyze Complexity"):
-            if not code:
-                st.error("Please provide code to analyze.")
-            else:
-                with st.spinner("Analyzing complexity..."):
-                    analysis = analyze_complexity(code, language)
-                    st.subheader("Analysis:")
-                    st.write(analysis)
+if answer_mode == "Type":
+    answer = st.text_area("Type your answer here...")
+    if st.button("Submit Answer"):
+        st.write("Answer submitted.")
+elif answer_mode == "Speak":
+    if st.button("Record Answer"):
+        recognizer = sr.Recognizer()
+        with sr.Microphone() as source:
+            st.write("Listening...")
+            try:
+                audio = recognizer.listen(source, timeout=10)
+                answer = recognizer.recognize_google(audio)
+                st.write("You said:", answer)
+            except sr.UnknownValueError:
+                st.error("Could not understand the audio.")
+                answer = ""
+            except sr.RequestError as e:
+                st.error(f"Speech Recognition service error: {e}")
+                answer = ""
 
-                    # Add dynamic visualization
-                    st.subheader("Complexity Visualization")
-                    complexities = {
-                        "Best Case": 0.2,
-                        "Average Case": 0.5,
-                        "Worst Case": 1.0,
-                    }
-                    fig, ax = plt.subplots()
-                    ax.bar(
-                        complexities.keys(),
-                        complexities.values(),
-                        color=["green", "orange", "red"],
-                    )
-                    st.pyplot(fig)
+# Analysis and Feedback
+if answer.strip():  # Ensure answer is not empty or whitespace
+    # Answer Embedding Analysis
+    embeddings = model.encode(answer, convert_to_tensor=True)
 
-    elif feature == "Skill-Gap-Based Question Generation":
-        st.subheader("Skill-Gap-Based Question Generation")
-        skill_gap_data = st.text_area("Enter skill-gap data:", height=150)
-        language = st.selectbox("Select the programming language:", ["Python", "JavaScript", "Java", "C++", "Go", "Ruby", "Other"])
-        if st.button("Generate Questions"):
-            if not skill_gap_data:
-                st.error("Please provide skill-gap data.")
-            else:
-                with st.spinner("Generating questions..."):
-                    questions = generate_practice_questions(skill_gap_data, language)
-                    st.subheader("Generated Questions:")
-                    st.write(questions)
+    # Clarity and Relevance Feedback
+    clarity_score = len(answer.split()) / 50  # Basic word count ratio
+    if clarity_score < 1:
+        clarity_feedback = "Your answer is too short and lacks detail. Consider expanding on your points with examples or explanations."
+    elif clarity_score > 3:
+        clarity_feedback = "Your answer is too long and may lack focus. Try to be more concise while covering the main points."
+    else:
+        clarity_feedback = "Well explained! Your answer is detailed and focused."
 
-    elif feature == "Interactive Mentoring":
-        st.subheader("Interactive Mentoring")
-        code = st_ace(language="python", theme="monokai", height=400, font_size=14)
-        language = st.selectbox("Select the programming language:", ["Python", "JavaScript", "Java", "C++", "Go", "Ruby", "Other"])
-        if st.button("Get Mentoring"):
-            if not code:
-                st.error("Please provide code for mentoring.")
-            else:
-                with st.spinner("Providing mentoring feedback..."):
-                    mentoring_feedback = interactive_mentoring(code, language)
-                    st.subheader("Mentoring Feedback:")
-                    st.write(mentoring_feedback)
+    # Sentiment Analysis
+    sentiment = sia.polarity_scores(answer)
+    if sentiment['pos'] > 0.5:
+        tone_feedback = "Your tone is positive and engaging. Keep it up!"
+    elif sentiment['neg'] > 0.5:
+        tone_feedback = "Your tone comes across as too negative. Try to rephrase certain parts to sound more optimistic."
+    else:
+        tone_feedback = "Your tone is neutral. Adding a bit more enthusiasm can make your response more compelling."
 
-if __name__ == "__main__":
-    main()
+    # Actionable Feedback on Structure and Specific Suggestions
+    structure_feedback = "Your answer could benefit from a clearer structure. Consider organizing it into three parts: an introduction, the main points, and a conclusion."
+    specific_feedback = "Consider revising the following parts of your answer: \n- Opening: Does it grab attention? \n- Examples: Are they specific and relevant? \n- Closing: Does it leave a strong impression?"
+
+    # Display Feedback
+    st.subheader("Feedback")
+    st.write(f"**Clarity:** {clarity_feedback}")
+    st.write(f"**Tone:** {tone_feedback}")
+    st.write(f"**Structure:** {structure_feedback}")
+    st.write(f"**Specific Suggestions:** {specific_feedback}")
+else:
+    st.write("Please provide an answer to receive feedback.")
+
+# Conclusion
+st.sidebar.subheader("About")
+st.sidebar.write("This app helps you practice mock interviews and improve communication skills.")
